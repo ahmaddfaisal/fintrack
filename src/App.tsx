@@ -45,6 +45,7 @@ import {
 } from 'recharts';
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, subMonths, addMonths } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
+import * as XLSX from 'xlsx';
 import { Transaction, TransactionType } from './types';
 import { cn, formatCurrency } from './lib/utils';
 
@@ -288,14 +289,18 @@ export default function App() {
   };
 
   const exportData = () => {
-    const dataStr = JSON.stringify(transactions, null, 2);
-    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-    const exportFileDefaultName = `fintrack-data-${format(new Date(), 'yyyy-MM-dd')}.json`;
-    
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', exportFileDefaultName);
-    linkElement.click();
+    const dataToExport = transactions.map(t => ({
+      'ID': t.id,
+      'Tanggal': t.date,
+      'Tipe': t.type === 'income' ? 'Pemasukan' : 'Pengeluaran',
+      'Kategori': t.category,
+      'Jumlah': t.amount,
+      'Deskripsi': t.description
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Transaksi");
+    XLSX.writeFile(workbook, `fintrack-data-${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
   };
 
   const importData = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -305,16 +310,29 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const imported = JSON.parse(event.target?.result as string);
-        if (Array.isArray(imported)) {
+        const data = new Uint8Array(event.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rawData = XLSX.utils.sheet_to_json(worksheet) as any[];
+        
+        const imported: Transaction[] = rawData.map(row => ({
+          id: row['ID'] || crypto.randomUUID(),
+          date: row['Tanggal'] || format(new Date(), 'yyyy-MM-dd'),
+          type: row['Tipe'] === 'Pemasukan' ? 'income' : 'expense',
+          category: row['Kategori'] || 'Lainnya',
+          amount: Number(row['Jumlah']) || 0,
+          description: row['Deskripsi'] || ''
+        }));
+
+        if (imported.length > 0) {
           setTransactions(imported);
-          alert('Data berhasil diimpor!');
+          alert('Data berhasil diimpor dari Excel!');
         }
       } catch (err) {
-        alert('Format file tidak valid!');
+        alert('Gagal membaca file Excel! Pastikan formatnya sesuai.');
       }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   };
 
   const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#71717a'];
@@ -422,14 +440,17 @@ export default function App() {
               <div className="flex gap-2 ml-4">
                 <button 
                   onClick={exportData}
-                  title="Export Data"
+                  title="Export Excel"
                   className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-white"
                 >
                   <Download size={18} />
                 </button>
-                <label className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-white cursor-pointer">
+                <label 
+                  title="Import Excel"
+                  className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-white cursor-pointer"
+                >
                   <Upload size={18} />
-                  <input type="file" accept=".json" onChange={importData} className="hidden" />
+                  <input type="file" accept=".xlsx, .xls" onChange={importData} className="hidden" />
                 </label>
               </div>
             </div>
