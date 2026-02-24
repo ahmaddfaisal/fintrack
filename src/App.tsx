@@ -64,6 +64,7 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [authEmail, setAuthEmail] = useState('');
+  const [authUsername, setAuthUsername] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -129,7 +130,11 @@ export default function App() {
     try {
       const { error } = await supabase
         .from('transactions')
-        .insert([{ ...transaction, user_id: user.id }]);
+        .insert([{ 
+          ...transaction, 
+          user_id: user.id,
+          username: user.user_metadata?.username || user.email 
+        }]);
       if (error) throw error;
     } catch (err: any) {
       setSyncError(err.message);
@@ -163,15 +168,22 @@ export default function App() {
           password: authPassword,
         });
       } else {
+        if (!authUsername) throw new Error('Username wajib diisi');
         result = await supabase.auth.signUp({
           email: authEmail,
           password: authPassword,
+          options: {
+            data: {
+              username: authUsername
+            }
+          }
         });
       }
 
       if (result.error) throw result.error;
       setIsAuthModalOpen(false);
       setAuthEmail('');
+      setAuthUsername('');
       setAuthPassword('');
     } catch (err: any) {
       setSyncError(err.message);
@@ -248,8 +260,11 @@ export default function App() {
     e.preventDefault();
     if (!formData.amount || !formData.category || !isAdding) return;
 
+    // Generate a shorter unique ID (8 chars alphanumeric)
+    const shortId = 'TX-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+
     const newTransaction: Transaction = {
-      id: crypto.randomUUID(),
+      id: shortId,
       type: isAdding,
       amount: parseFloat(formData.amount),
       category: formData.category,
@@ -377,7 +392,9 @@ export default function App() {
                     <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1 uppercase tracking-tighter">
                       <Cloud size={10} /> Cloud Synced
                     </span>
-                    <span className="text-xs font-medium text-slate-500 truncate max-w-[100px]">{user.email}</span>
+                    <span className="text-xs font-medium text-slate-500 truncate max-w-[120px]">
+                      {user.user_metadata?.username || user.email}
+                    </span>
                   </div>
                   <button 
                     onClick={handleLogout}
@@ -780,6 +797,20 @@ export default function App() {
                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-900 outline-none"
                   />
                 </div>
+
+                {authMode === 'signup' && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Username</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="Contoh: budi_finance"
+                      value={authUsername}
+                      onChange={e => setAuthUsername(e.target.value)}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-900 outline-none"
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Password</label>
