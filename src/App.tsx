@@ -361,7 +361,10 @@ export default function App() {
             <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-emerald-200">
               <Wallet size={24} />
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-800">FinTrack</h1>
+            <div className="flex flex-col -space-y-1">
+              <h1 className="text-xl font-bold tracking-tight text-slate-800 leading-tight">FinTrack</h1>
+              <p className="text-[10px] font-medium text-slate-400 italic">Stay chill, Fintrack it.</p>
+            </div>
           </div>
           
           <div className="flex items-center gap-4">
