@@ -30,7 +30,8 @@ import {
   PiggyBank,
   CreditCard,
   Building2,
-  MoreHorizontal
+  MoreHorizontal,
+  ArrowRightLeft
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
@@ -56,7 +57,8 @@ import { cn, formatCurrency } from './lib/utils';
 const CATEGORIES = {
   income: ['Gaji', 'Bonus', 'Investasi', 'Freelance', 'Lainnya'],
   expense: ['Makanan', 'Transportasi', 'Sewa/Cicilan', 'Hiburan', 'Belanja', 'Kesehatan', 'Pendidikan', 'Lainnya'],
-  saving: ['Tabungan Darurat', 'Tabungan Nikah', 'Tabungan Rumah', 'Tabungan Kendaraan', 'Investasi Saham/Reksadana', 'Lainnya']
+  saving: ['Tabungan Darurat', 'Tabungan Nikah', 'Tabungan Rumah', 'Tabungan Kendaraan', 'Investasi Saham/Reksadana', 'Lainnya'],
+  transfer: ['Pindah Saldo', 'Tabungan', 'Lainnya']
 };
 
 export default function App() {
@@ -88,7 +90,8 @@ export default function App() {
     category: '',
     description: '',
     date: format(new Date(), 'yyyy-MM-dd'),
-    account_id: ''
+    account_id: '',
+    to_account_id: ''
   });
 
   const [accountFormData, setAccountFormData] = useState({
@@ -329,7 +332,8 @@ export default function App() {
       category: formData.category,
       description: formData.description,
       date: formData.date,
-      account_id: formData.account_id || undefined
+      account_id: formData.account_id || undefined,
+      to_account_id: formData.to_account_id || undefined
     };
 
     setTransactions([newTransaction, ...transactions]);
@@ -343,7 +347,8 @@ export default function App() {
       category: '',
       description: '',
       date: format(new Date(), 'yyyy-MM-dd'),
-      account_id: ''
+      account_id: '',
+      to_account_id: ''
     });
   };
 
@@ -382,14 +387,26 @@ export default function App() {
 
   const accountStats = useMemo(() => {
     return accounts.map(acc => {
-      const accTransactions = transactions.filter(t => t.account_id === acc.id);
-      const income = accTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-      const expenses = accTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
-      const savings = accTransactions.filter(t => t.type === 'saving').reduce((sum, t) => sum + t.amount, 0);
+      const accTransactions = transactions.filter(t => t.account_id === acc.id || t.to_account_id === acc.id);
+      
+      const balanceChange = accTransactions.reduce((sum, t) => {
+        if (t.type === 'income') return sum + t.amount;
+        if (t.type === 'expense') return sum - t.amount;
+        if (t.type === 'saving') {
+          // If it's a saving WITH a destination account
+          if (t.to_account_id === acc.id) return sum + t.amount; // Received as saving
+          if (t.account_id === acc.id) return sum - t.amount; // Sent as saving
+        }
+        if (t.type === 'transfer') {
+          if (t.to_account_id === acc.id) return sum + t.amount;
+          if (t.account_id === acc.id) return sum - t.amount;
+        }
+        return sum;
+      }, 0);
       
       return {
         ...acc,
-        current_balance: acc.initial_balance + income - expenses - savings
+        current_balance: acc.initial_balance + balanceChange
       };
     });
   }, [accounts, transactions]);
@@ -732,6 +749,12 @@ export default function App() {
           >
             <PiggyBank size={20} /> Tambah Tabungan
           </button>
+          <button 
+            onClick={() => setIsAdding('transfer')}
+            className="flex-1 min-w-[160px] bg-slate-600 hover:bg-slate-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-slate-100 transition-all flex items-center justify-center gap-2"
+          >
+            <ArrowRightLeft size={20} /> Transfer Antar Bank
+          </button>
         </div>
 
         {/* Charts Section */}
@@ -818,20 +841,30 @@ export default function App() {
                     <div className={cn(
                       "w-10 h-10 rounded-xl flex items-center justify-center",
                       t.type === 'income' ? "bg-emerald-50 text-emerald-600" : 
-                      t.type === 'expense' ? "bg-rose-50 text-rose-600" : "bg-blue-50 text-blue-600"
+                      t.type === 'expense' ? "bg-rose-50 text-rose-600" : 
+                      t.type === 'saving' ? "bg-blue-50 text-blue-600" : "bg-slate-50 text-slate-600"
                     )}>
                       {t.type === 'income' ? <TrendingUp size={20} /> : 
-                       t.type === 'expense' ? <TrendingDown size={20} /> : <PiggyBank size={20} />}
+                       t.type === 'expense' ? <TrendingDown size={20} /> : 
+                       t.type === 'saving' ? <PiggyBank size={20} /> : <ArrowRightLeft size={20} />}
                     </div>
                     <div>
                       <p className="font-bold text-slate-800">{t.category}</p>
                       <p className="text-xs text-slate-500">
                         {t.description || 'Tanpa deskripsi'} • {format(parseISO(t.date), 'dd MMM yyyy')}
-                        {t.account_id && (
-                          <span className="ml-2 px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-400">
-                            {accounts.find(a => a.id === t.account_id)?.name || 'Unknown'}
-                          </span>
-                        )}
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {t.account_id && (
+                            <span className="px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-400">
+                              {t.type === 'transfer' || t.type === 'saving' ? 'Dari: ' : ''}
+                              {accounts.find(a => a.id === t.account_id)?.name || 'Unknown'}
+                            </span>
+                          )}
+                          {t.to_account_id && (
+                            <span className="px-1.5 py-0.5 bg-blue-50 rounded text-[10px] font-bold text-blue-400">
+                              Ke: {accounts.find(a => a.id === t.to_account_id)?.name || 'Unknown'}
+                            </span>
+                          )}
+                        </div>
                       </p>
                     </div>
                   </div>
@@ -839,9 +872,10 @@ export default function App() {
                     <p className={cn(
                       "font-bold text-right",
                       t.type === 'income' ? "text-emerald-600" : 
-                      t.type === 'expense' ? "text-rose-600" : "text-blue-600"
+                      t.type === 'expense' ? "text-rose-600" : 
+                      t.type === 'saving' ? "text-blue-600" : "text-slate-600"
                     )}>
-                      {t.type === 'income' ? '+' : t.type === 'expense' ? '-' : '•'}{formatCurrency(t.amount)}
+                      {t.type === 'income' ? '+' : t.type === 'expense' ? '-' : t.type === 'saving' ? '•' : '⇄'}{formatCurrency(t.amount)}
                     </p>
                     <button 
                       onClick={() => deleteTransaction(t.id)}
@@ -882,11 +916,18 @@ export default function App() {
               <div className={cn(
                 "p-6 text-white flex items-center justify-between",
                 isAdding === 'income' ? "bg-emerald-600" : 
-                isAdding === 'expense' ? "bg-rose-600" : "bg-blue-600"
+                isAdding === 'expense' ? "bg-rose-600" : 
+                isAdding === 'saving' ? "bg-blue-600" : "bg-slate-600"
               )}>
                 <h3 className="text-xl font-bold flex items-center gap-2">
-                  {isAdding === 'income' ? <PlusCircle /> : isAdding === 'expense' ? <MinusCircle /> : <PiggyBank />}
-                  Tambah {isAdding === 'income' ? 'Pemasukan' : isAdding === 'expense' ? 'Pengeluaran' : 'Tabungan'}
+                  {isAdding === 'income' ? <PlusCircle /> : 
+                   isAdding === 'expense' ? <MinusCircle /> : 
+                   isAdding === 'saving' ? <PiggyBank /> : <ArrowRightLeft />}
+                  Tambah {
+                    isAdding === 'income' ? 'Pemasukan' : 
+                    isAdding === 'expense' ? 'Pengeluaran' : 
+                    isAdding === 'saving' ? 'Tabungan' : 'Transfer'
+                  }
                 </h3>
                 <button onClick={() => setIsAdding(null)} className="hover:bg-white/20 p-1 rounded-full transition-colors">
                   <ChevronLeft className="rotate-90" />
@@ -923,7 +964,9 @@ export default function App() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Pilih Rekening</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    {isAdding === 'transfer' || isAdding === 'saving' ? 'Dari Rekening' : 'Pilih Rekening'}
+                  </label>
                   <select 
                     required
                     value={formData.account_id}
@@ -936,6 +979,30 @@ export default function App() {
                     ))}
                   </select>
                 </div>
+
+                {(isAdding === 'transfer' || isAdding === 'saving') && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      Ke Rekening (Tujuan)
+                    </label>
+                    <select 
+                      required={isAdding === 'transfer'}
+                      value={formData.to_account_id}
+                      onChange={e => setFormData({...formData, to_account_id: e.target.value})}
+                      className="w-full p-3 bg-blue-50 border border-blue-100 rounded-xl focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-all appearance-none"
+                    >
+                      <option value="">{isAdding === 'saving' ? 'Pilih Rekening (Opsional)' : 'Pilih Rekening Tujuan'}</option>
+                      {accounts.filter(acc => acc.id !== formData.account_id).map(acc => (
+                        <option key={acc.id} value={acc.id}>{acc.name}</option>
+                      ))}
+                    </select>
+                    {isAdding === 'saving' && (
+                      <p className="text-[10px] text-slate-400 italic">
+                        * Jika dipilih, saldo akan dipindahkan ke rekening ini. Jika dikosongkan, hanya mencatat tabungan tanpa pindah saldo.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tanggal</label>
@@ -965,7 +1032,8 @@ export default function App() {
                   className={cn(
                     "w-full py-4 rounded-xl text-white font-bold shadow-lg transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2",
                     isAdding === 'income' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100" : 
-                    isAdding === 'expense' ? "bg-rose-600 hover:bg-rose-700 shadow-rose-100" : "bg-blue-600 hover:bg-blue-700 shadow-blue-100",
+                    isAdding === 'expense' ? "bg-rose-600 hover:bg-rose-700 shadow-rose-100" : 
+                    isAdding === 'saving' ? "bg-blue-600 hover:bg-blue-700 shadow-blue-100" : "bg-slate-600 hover:bg-slate-700 shadow-slate-100",
                     isSyncing && "opacity-50 cursor-not-allowed"
                   )}
                 >
