@@ -338,7 +338,12 @@ export default function App() {
 
     setTransactions([newTransaction, ...transactions]);
     if (user) {
-      await saveToSupabase(newTransaction);
+      try {
+        await saveToSupabase(newTransaction);
+      } catch (err: any) {
+        alert("Gagal menyimpan ke Cloud: " + err.message);
+        // Rollback local state if needed, but usually syncError is enough
+      }
     }
     
     setIsAdding(null);
