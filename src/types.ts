@@ -1,4 +1,4 @@
-export type TransactionType = 'income' | 'expense' | 'saving';
+export type TransactionType = 'income' | 'expense' | 'saving' | 'transfer';
 
 export interface Account {
   id: string;
@@ -15,6 +15,7 @@ export interface Transaction {
   description: string;
   date: string; // ISO string
   account_id?: string;
+  to_account_id?: string;
 }
 
 export interface MonthlySummary {
