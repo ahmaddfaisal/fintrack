@@ -26,7 +26,8 @@ import {
   LogIn,
   LogOut,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  PiggyBank
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
@@ -51,7 +52,8 @@ import { cn, formatCurrency } from './lib/utils';
 
 const CATEGORIES = {
   income: ['Gaji', 'Bonus', 'Investasi', 'Freelance', 'Lainnya'],
-  expense: ['Makanan', 'Transportasi', 'Sewa/Cicilan', 'Hiburan', 'Belanja', 'Kesehatan', 'Pendidikan', 'Lainnya']
+  expense: ['Makanan', 'Transportasi', 'Sewa/Cicilan', 'Hiburan', 'Belanja', 'Kesehatan', 'Pendidikan', 'Lainnya'],
+  saving: ['Tabungan Darurat', 'Tabungan Nikah', 'Tabungan Rumah', 'Tabungan Kendaraan', 'Investasi Saham/Reksadana', 'Lainnya']
 };
 
 export default function App() {
@@ -214,7 +216,10 @@ export default function App() {
     const expenses = filteredTransactions
       .filter(t => t.type === 'expense')
       .reduce((sum, t) => sum + t.amount, 0);
-    return { income, expenses, balance: income - expenses };
+    const savings = filteredTransactions
+      .filter(t => t.type === 'saving')
+      .reduce((sum, t) => sum + t.amount, 0);
+    return { income, expenses, savings, balance: income - expenses - savings };
   }, [filteredTransactions]);
 
   const chartData = useMemo(() => {
@@ -235,11 +240,15 @@ export default function App() {
       const expenses = monthTransactions
         .filter(t => t.type === 'expense')
         .reduce((sum, t) => sum + t.amount, 0);
+      const savings = monthTransactions
+        .filter(t => t.type === 'saving')
+        .reduce((sum, t) => sum + t.amount, 0);
 
       data.push({
         name: format(date, 'MMM'),
         income,
-        expenses
+        expenses,
+        savings
       });
     }
     return data;
@@ -291,7 +300,8 @@ export default function App() {
     const yearTransactions = transactions.filter(t => parseISO(t.date).getFullYear() === year);
     const income = yearTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
     const expenses = yearTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
-    return { income, expenses, balance: income - expenses, year };
+    const savings = yearTransactions.filter(t => t.type === 'saving').reduce((sum, t) => sum + t.amount, 0);
+    return { income, expenses, savings, balance: income - expenses - savings, year };
   }, [transactions, currentMonth]);
 
   const deleteTransaction = async (id: string) => {
@@ -307,7 +317,7 @@ export default function App() {
     const dataToExport = transactions.map(t => ({
       'ID': t.id,
       'Tanggal': t.date,
-      'Tipe': t.type === 'income' ? 'Pemasukan' : 'Pengeluaran',
+      'Tipe': t.type === 'income' ? 'Pemasukan' : t.type === 'expense' ? 'Pengeluaran' : 'Tabungan',
       'Kategori': t.category,
       'Jumlah': t.amount,
       'Deskripsi': t.description
@@ -333,7 +343,7 @@ export default function App() {
         const imported: Transaction[] = rawData.map(row => ({
           id: row['ID'] || crypto.randomUUID(),
           date: row['Tanggal'] || format(new Date(), 'yyyy-MM-dd'),
-          type: row['Tipe'] === 'Pemasukan' ? 'income' : 'expense',
+          type: row['Tipe'] === 'Pemasukan' ? 'income' : row['Tipe'] === 'Pengeluaran' ? 'expense' : 'saving',
           category: row['Kategori'] || 'Lainnya',
           amount: Number(row['Jumlah']) || 0,
           description: row['Deskripsi'] || ''
@@ -452,6 +462,10 @@ export default function App() {
               <p className="text-[10px] text-slate-400 uppercase">Pengeluaran</p>
               <p className="text-sm font-bold text-rose-400">{formatCurrency(yearlyStats.expenses)}</p>
             </div>
+            <div className="hidden sm:block">
+              <p className="text-[10px] text-slate-400 uppercase">Tabungan</p>
+              <p className="text-sm font-bold text-blue-400">{formatCurrency(yearlyStats.savings)}</p>
+            </div>
             <div className="sm:border-l border-slate-700 sm:pl-6 flex items-center gap-4">
               <div>
                 <p className="text-[10px] text-slate-400 uppercase">Sisa</p>
@@ -477,7 +491,7 @@ export default function App() {
           </div>
         </div>
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -516,6 +530,24 @@ export default function App() {
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+            className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                <PiggyBank size={20} />
+              </div>
+              <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-full flex items-center gap-1">
+                Tabungan
+              </span>
+            </div>
+            <p className="text-slate-500 text-sm font-medium">Total Tabungan</p>
+            <h2 className="text-2xl font-bold mt-1 text-blue-700">{formatCurrency(stats.savings)}</h2>
+          </motion.div>
+
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
             className="bg-slate-900 p-6 rounded-2xl shadow-xl shadow-slate-200"
           >
@@ -543,6 +575,12 @@ export default function App() {
           >
             <MinusCircle size={20} /> Tambah Pengeluaran
           </button>
+          <button 
+            onClick={() => setIsAdding('saving')}
+            className="flex-1 min-w-[160px] bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-blue-100 transition-all flex items-center justify-center gap-2"
+          >
+            <PiggyBank size={20} /> Tambah Tabungan
+          </button>
         </div>
 
         {/* Charts Section */}
@@ -565,6 +603,7 @@ export default function App() {
                   />
                   <Bar dataKey="income" fill="#10b981" radius={[4, 4, 0, 0]} name="Pemasukan" />
                   <Bar dataKey="expenses" fill="#ef4444" radius={[4, 4, 0, 0]} name="Pengeluaran" />
+                  <Bar dataKey="savings" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Tabungan" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -627,9 +666,11 @@ export default function App() {
                   <div className="flex items-center gap-4">
                     <div className={cn(
                       "w-10 h-10 rounded-xl flex items-center justify-center",
-                      t.type === 'income' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                      t.type === 'income' ? "bg-emerald-50 text-emerald-600" : 
+                      t.type === 'expense' ? "bg-rose-50 text-rose-600" : "bg-blue-50 text-blue-600"
                     )}>
-                      {t.type === 'income' ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
+                      {t.type === 'income' ? <TrendingUp size={20} /> : 
+                       t.type === 'expense' ? <TrendingDown size={20} /> : <PiggyBank size={20} />}
                     </div>
                     <div>
                       <p className="font-bold text-slate-800">{t.category}</p>
@@ -639,13 +680,14 @@ export default function App() {
                   <div className="flex items-center gap-4">
                     <p className={cn(
                       "font-bold text-right",
-                      t.type === 'income' ? "text-emerald-600" : "text-rose-600"
+                      t.type === 'income' ? "text-emerald-600" : 
+                      t.type === 'expense' ? "text-rose-600" : "text-blue-600"
                     )}>
-                      {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
+                      {t.type === 'income' ? '+' : t.type === 'expense' ? '-' : '•'}{formatCurrency(t.amount)}
                     </p>
                     <button 
                       onClick={() => deleteTransaction(t.id)}
-                      className="p-2 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                      className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100"
                     >
                       <Trash2 size={18} />
                     </button>
@@ -681,11 +723,12 @@ export default function App() {
             >
               <div className={cn(
                 "p-6 text-white flex items-center justify-between",
-                isAdding === 'income' ? "bg-emerald-600" : "bg-rose-600"
+                isAdding === 'income' ? "bg-emerald-600" : 
+                isAdding === 'expense' ? "bg-rose-600" : "bg-blue-600"
               )}>
                 <h3 className="text-xl font-bold flex items-center gap-2">
-                  {isAdding === 'income' ? <PlusCircle /> : <MinusCircle />}
-                  Tambah {isAdding === 'income' ? 'Pemasukan' : 'Pengeluaran'}
+                  {isAdding === 'income' ? <PlusCircle /> : isAdding === 'expense' ? <MinusCircle /> : <PiggyBank />}
+                  Tambah {isAdding === 'income' ? 'Pemasukan' : isAdding === 'expense' ? 'Pengeluaran' : 'Tabungan'}
                 </h3>
                 <button onClick={() => setIsAdding(null)} className="hover:bg-white/20 p-1 rounded-full transition-colors">
                   <ChevronLeft className="rotate-90" />
@@ -748,7 +791,8 @@ export default function App() {
                   disabled={isSyncing}
                   className={cn(
                     "w-full py-4 rounded-xl text-white font-bold shadow-lg transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2",
-                    isAdding === 'income' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100" : "bg-rose-600 hover:bg-rose-700 shadow-rose-100",
+                    isAdding === 'income' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100" : 
+                    isAdding === 'expense' ? "bg-rose-600 hover:bg-rose-700 shadow-rose-100" : "bg-blue-600 hover:bg-blue-700 shadow-blue-100",
                     isSyncing && "opacity-50 cursor-not-allowed"
                   )}
                 >
