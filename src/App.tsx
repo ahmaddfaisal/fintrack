@@ -168,6 +168,7 @@ export default function App() {
       if (error) throw error;
     } catch (err: any) {
       setSyncError(err.message);
+      throw err; // Re-throw agar alert muncul di UI
     }
   };
 
