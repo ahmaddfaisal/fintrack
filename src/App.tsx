@@ -27,7 +27,10 @@ import {
   LogOut,
   RefreshCw,
   AlertCircle,
-  PiggyBank
+  PiggyBank,
+  CreditCard,
+  Building2,
+  MoreHorizontal
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
@@ -47,7 +50,7 @@ import {
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, subMonths, addMonths } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
-import { Transaction, TransactionType } from './types';
+import { Transaction, TransactionType, Account } from './types';
 import { cn, formatCurrency } from './lib/utils';
 
 const CATEGORIES = {
@@ -62,6 +65,11 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
+  const [accounts, setAccounts] = useState<Account[]>(() => {
+    const saved = localStorage.getItem('fintrack_accounts');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const [user, setUser] = useState<User | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
@@ -73,11 +81,20 @@ export default function App() {
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [isAdding, setIsAdding] = useState<TransactionType | null>(null);
+  const [isAddingAccount, setIsAddingAccount] = useState(false);
+  
   const [formData, setFormData] = useState({
     amount: '',
     category: '',
     description: '',
-    date: format(new Date(), 'yyyy-MM-dd')
+    date: format(new Date(), 'yyyy-MM-dd'),
+    account_id: ''
+  });
+
+  const [accountFormData, setAccountFormData] = useState({
+    name: '',
+    initial_balance: '',
+    color: '#10b981'
   });
 
   // Auth Listener
@@ -105,21 +122,29 @@ export default function App() {
   useEffect(() => {
     if (!user) {
       localStorage.setItem('fintrack_transactions', JSON.stringify(transactions));
+      localStorage.setItem('fintrack_accounts', JSON.stringify(accounts));
     }
-  }, [transactions, user]);
+  }, [transactions, accounts, user]);
 
   const fetchFromSupabase = async () => {
     if (!supabase || !user) return;
     setIsSyncing(true);
     setSyncError(null);
     try {
-      const { data, error } = await supabase
+      const { data: transData, error: transError } = await supabase
         .from('transactions')
         .select('*')
         .order('date', { ascending: false });
 
-      if (error) throw error;
-      if (data) setTransactions(data);
+      if (transError) throw transError;
+      if (transData) setTransactions(transData);
+
+      const { data: accData, error: accError } = await supabase
+        .from('accounts')
+        .select('*');
+
+      if (accError) throw accError;
+      if (accData) setAccounts(accData);
     } catch (err: any) {
       setSyncError(err.message);
     } finally {
@@ -148,6 +173,31 @@ export default function App() {
     try {
       const { error } = await supabase
         .from('transactions')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (err: any) {
+      setSyncError(err.message);
+    }
+  };
+
+  const saveAccountToSupabase = async (account: Account) => {
+    if (!supabase || !user) return;
+    try {
+      const { error } = await supabase
+        .from('accounts')
+        .insert([{ ...account, user_id: user.id }]);
+      if (error) throw error;
+    } catch (err: any) {
+      setSyncError(err.message);
+    }
+  };
+
+  const deleteAccountFromSupabase = async (id: string) => {
+    if (!supabase || !user) return;
+    try {
+      const { error } = await supabase
+        .from('accounts')
         .delete()
         .eq('id', id);
       if (error) throw error;
@@ -278,7 +328,8 @@ export default function App() {
       amount: parseFloat(formData.amount),
       category: formData.category,
       description: formData.description,
-      date: formData.date
+      date: formData.date,
+      account_id: formData.account_id || undefined
     };
 
     setTransactions([newTransaction, ...transactions]);
@@ -291,9 +342,57 @@ export default function App() {
       amount: '',
       category: '',
       description: '',
-      date: format(new Date(), 'yyyy-MM-dd')
+      date: format(new Date(), 'yyyy-MM-dd'),
+      account_id: ''
     });
   };
+
+  const handleAddAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accountFormData.name || !accountFormData.initial_balance) return;
+
+    const newAccount: Account = {
+      id: 'ACC-' + Math.random().toString(36).substring(2, 10).toUpperCase(),
+      name: accountFormData.name,
+      initial_balance: parseFloat(accountFormData.initial_balance),
+      color: accountFormData.color
+    };
+
+    setAccounts([...accounts, newAccount]);
+    if (user) {
+      await saveAccountToSupabase(newAccount);
+    }
+
+    setIsAddingAccount(false);
+    setAccountFormData({
+      name: '',
+      initial_balance: '',
+      color: '#10b981'
+    });
+  };
+
+  const deleteAccount = async (id: string) => {
+    if (confirm('Hapus rekening ini? Semua transaksi terkait akan kehilangan referensi rekeningnya.')) {
+      setAccounts(accounts.filter(a => a.id !== id));
+      if (user) {
+        await deleteAccountFromSupabase(id);
+      }
+    }
+  };
+
+  const accountStats = useMemo(() => {
+    return accounts.map(acc => {
+      const accTransactions = transactions.filter(t => t.account_id === acc.id);
+      const income = accTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+      const expenses = accTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+      const savings = accTransactions.filter(t => t.type === 'saving').reduce((sum, t) => sum + t.amount, 0);
+      
+      return {
+        ...acc,
+        current_balance: acc.initial_balance + income - expenses - savings
+      };
+    });
+  }, [accounts, transactions]);
 
   const yearlyStats = useMemo(() => {
     const year = currentMonth.getFullYear();
@@ -442,6 +541,58 @@ export default function App() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
+        {/* Accounts Section */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+              <Building2 size={20} className="text-slate-400" /> Rekening Saya
+            </h3>
+            <button 
+              onClick={() => setIsAddingAccount(true)}
+              className="text-xs font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
+            >
+              <PlusCircle size={14} /> Tambah Rekening
+            </button>
+          </div>
+          
+          <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
+            {accountStats.length > 0 ? (
+              accountStats.map(acc => (
+                <motion.div 
+                  key={acc.id}
+                  whileHover={{ y: -4 }}
+                  className="min-w-[240px] bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative group"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm" style={{ backgroundColor: acc.color }}>
+                      <CreditCard size={20} />
+                    </div>
+                    <button 
+                      onClick={() => deleteAccount(acc.id)}
+                      className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-md opacity-0 group-hover:opacity-100 transition-all"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">{acc.name}</p>
+                  <h4 className="text-xl font-bold text-slate-800 mt-1">{formatCurrency(acc.current_balance)}</h4>
+                  <div className="mt-3 pt-3 border-t border-slate-50 flex items-center justify-between">
+                    <span className="text-[10px] font-medium text-slate-400">Saldo Awal: {formatCurrency(acc.initial_balance)}</span>
+                  </div>
+                </motion.div>
+              ))
+            ) : (
+              <div 
+                onClick={() => setIsAddingAccount(true)}
+                className="w-full py-10 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center text-slate-400 hover:border-emerald-200 hover:text-emerald-600 cursor-pointer transition-all"
+              >
+                <PlusCircle size={32} className="mb-2 opacity-20" />
+                <p className="text-sm font-medium">Belum ada rekening. Tambah sekarang!</p>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Yearly Overview Banner */}
         <div className="bg-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 text-white">
           <div className="flex items-center gap-3">
@@ -674,7 +825,14 @@ export default function App() {
                     </div>
                     <div>
                       <p className="font-bold text-slate-800">{t.category}</p>
-                      <p className="text-xs text-slate-500">{t.description || 'Tanpa deskripsi'} • {format(parseISO(t.date), 'dd MMM yyyy')}</p>
+                      <p className="text-xs text-slate-500">
+                        {t.description || 'Tanpa deskripsi'} • {format(parseISO(t.date), 'dd MMM yyyy')}
+                        {t.account_id && (
+                          <span className="ml-2 px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-400">
+                            {accounts.find(a => a.id === t.account_id)?.name || 'Unknown'}
+                          </span>
+                        )}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
@@ -760,6 +918,21 @@ export default function App() {
                     <option value="">Pilih Kategori</option>
                     {CATEGORIES[isAdding].map(cat => (
                       <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Pilih Rekening</label>
+                  <select 
+                    required
+                    value={formData.account_id}
+                    onChange={e => setFormData({...formData, account_id: e.target.value})}
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all appearance-none"
+                  >
+                    <option value="">Pilih Rekening</option>
+                    {accounts.map(acc => (
+                      <option key={acc.id} value={acc.id}>{acc.name}</option>
                     ))}
                   </select>
                 </div>
@@ -888,6 +1061,84 @@ export default function App() {
                     {authMode === 'login' ? 'Daftar Sekarang' : 'Login Disini'}
                   </button>
                 </p>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isAddingAccount && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsAddingAccount(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 bg-emerald-600 text-white flex items-center justify-between">
+                <h3 className="text-xl font-bold flex items-center gap-2">
+                  <Building2 /> Tambah Rekening
+                </h3>
+                <button onClick={() => setIsAddingAccount(false)} className="hover:bg-white/20 p-1 rounded-full transition-colors">
+                  <ChevronLeft className="rotate-90" />
+                </button>
+              </div>
+              
+              <form onSubmit={handleAddAccount} className="p-6 space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Nama Rekening</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="Contoh: Mandiri, BRI, Dompet"
+                    value={accountFormData.name}
+                    onChange={e => setAccountFormData({...accountFormData, name: e.target.value})}
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Saldo Awal (Rp)</label>
+                  <input 
+                    type="number" 
+                    required
+                    placeholder="0"
+                    value={accountFormData.initial_balance}
+                    onChange={e => setAccountFormData({...accountFormData, initial_balance: e.target.value})}
+                    className="w-full text-xl font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Warna Tema</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#0f172a'].map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setAccountFormData({...accountFormData, color: c})}
+                        className={cn(
+                          "w-8 h-8 rounded-full border-2 transition-all",
+                          accountFormData.color === c ? "border-slate-900 scale-110" : "border-transparent"
+                        )}
+                        style={{ backgroundColor: c }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <button 
+                  type="submit"
+                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 mt-4"
+                >
+                  Simpan Rekening
+                </button>
               </form>
             </motion.div>
           </div>
