@@ -250,8 +250,17 @@ export default function App() {
 
   const handleLogout = async () => {
     if (!supabase) return;
+    
+    // Clear states first
+    setTransactions([]); 
+    setAccounts([]);
+    
+    // Clear storage
+    localStorage.removeItem('fintrack_transactions');
+    localStorage.removeItem('fintrack_accounts');
+    
+    // Then sign out
     await supabase.auth.signOut();
-    setTransactions([]); // Clear local state on logout
   };
 
   const monthStart = startOfMonth(currentMonth);
