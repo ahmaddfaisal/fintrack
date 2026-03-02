@@ -283,8 +283,13 @@ export default function App() {
     setIsAILoading(true);
 
     try {
-      const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-      const model = genAI.models.generateContent({
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error('API Key Gemini tidak ditemukan. Pastikan sudah terkonfigurasi di environment.');
+      }
+
+      const genAI = new GoogleGenAI({ apiKey });
+      const response = await genAI.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: [
           {
@@ -308,12 +313,14 @@ export default function App() {
         ]
       });
 
-      const response = await model;
       const text = response.text;
       setAiMessages(prev => [...prev, { role: 'ai', text: text || 'Maaf, saya tidak bisa memproses permintaan Anda saat ini.' }]);
     } catch (err: any) {
       console.error('AI Error:', err);
-      setAiMessages(prev => [...prev, { role: 'ai', text: 'Waduh, sepertinya ada masalah koneksi dengan otak AI saya. Coba lagi nanti ya!' }]);
+      const errorMessage = err.message?.includes('API Key') 
+        ? 'Waduh, sepertinya API Key AI-nya belum terpasang di server production.' 
+        : 'Waduh, sepertinya ada masalah koneksi dengan otak AI saya. Coba lagi nanti ya!';
+      setAiMessages(prev => [...prev, { role: 'ai', text: errorMessage }]);
     } finally {
       setIsAILoading(false);
     }
