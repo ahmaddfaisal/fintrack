@@ -94,6 +94,8 @@ export default function App() {
   const [aiMessages, setAiMessages] = useState<{role: 'user' | 'ai', text: string}[]>([]);
   const [aiInput, setAiInput] = useState('');
   const [isAILoading, setIsAILoading] = useState(false);
+  const [manualApiKey, setManualApiKey] = useState(localStorage.getItem('fintrack_manual_ai_key') || '');
+  const [isAISettingsOpen, setIsAISettingsOpen] = useState(false);
   
   const [formData, setFormData] = useState({
     amount: '',
@@ -158,8 +160,22 @@ export default function App() {
 
       if (accError) throw accError;
       if (accData) setAccounts(accData);
+
+      // Fetch Settings (API Key)
+      const { data: settingsData, error: settingsError } = await supabase
+        .from('user_settings')
+        .select('gemini_api_key')
+        .single();
+      
+      if (settingsData?.gemini_api_key) {
+        setManualApiKey(settingsData.gemini_api_key);
+        localStorage.setItem('fintrack_manual_ai_key', settingsData.gemini_api_key);
+      }
     } catch (err: any) {
-      setSyncError(err.message);
+      // .single() returns error if no row found, we can ignore that
+      if (err.code !== 'PGRST116') {
+        setSyncError(err.message);
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -264,10 +280,12 @@ export default function App() {
     // Clear states first
     setTransactions([]); 
     setAccounts([]);
+    setManualApiKey('');
     
     // Clear storage
     localStorage.removeItem('fintrack_transactions');
     localStorage.removeItem('fintrack_accounts');
+    localStorage.removeItem('fintrack_manual_ai_key');
     
     // Then sign out
     await supabase.auth.signOut();
@@ -283,16 +301,14 @@ export default function App() {
     setIsAILoading(true);
 
     try {
-      // Coba ambil key dari environment atau dari pilihan user
-      let apiKey = process.env.GEMINI_API_KEY || (process.env as any).API_KEY;
+      // Coba ambil key dari: 1. Input Manual, 2. Env Var, 3. Dialog Platform
+      let apiKey = manualApiKey || process.env.GEMINI_API_KEY || (process.env as any).API_KEY;
       
-      // Jika tidak ada, cek apakah user sudah memilih key via dialog
       if (!apiKey && window.aistudio) {
         const hasKey = await window.aistudio.hasSelectedApiKey();
-        if (!hasKey) {
-          throw new Error('API_KEY_REQUIRED');
+        if (hasKey) {
+          apiKey = (process.env as any).API_KEY;
         }
-        apiKey = (process.env as any).API_KEY;
       }
 
       if (!apiKey) {
@@ -347,9 +363,33 @@ export default function App() {
   const handleOpenKeySelector = async () => {
     if (window.aistudio) {
       await window.aistudio.openSelectKey();
-      // Setelah pilih key, beri tahu user
-      setAiMessages(prev => [...prev, { role: 'ai', text: 'API Key berhasil diaktifkan! Silakan tanya saya apa saja sekarang.' }]);
+      setAiMessages(prev => [...prev, { role: 'ai', text: 'API Key berhasil diaktifkan via sistem! Silakan tanya saya apa saja sekarang.' }]);
+    } else {
+      setIsAISettingsOpen(true);
     }
+  };
+
+  const saveManualKey = async (key: string) => {
+    setManualApiKey(key);
+    localStorage.setItem('fintrack_manual_ai_key', key);
+    
+    if (user && supabase) {
+      try {
+        const { error } = await supabase
+          .from('user_settings')
+          .upsert({ 
+            user_id: user.id, 
+            gemini_api_key: key,
+            updated_at: new Date().toISOString()
+          });
+        if (error) throw error;
+      } catch (err: any) {
+        console.error('Error saving settings:', err);
+      }
+    }
+    
+    setIsAISettingsOpen(false);
+    setAiMessages(prev => [...prev, { role: 'ai', text: 'API Key berhasil disimpan di Cloud! Sekarang akan otomatis aktif di semua perangkat Anda.' }]);
   };
 
   const monthStart = startOfMonth(currentMonth);
@@ -1347,9 +1387,16 @@ export default function App() {
             >
               <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-emerald-400">
-                    <Bot size={24} />
-                  </div>
+                  <button 
+                    onClick={() => setIsAISettingsOpen(!isAISettingsOpen)}
+                    className={cn(
+                      "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                      isAISettingsOpen ? "bg-emerald-600 text-white" : "bg-slate-800 text-slate-400 hover:text-white"
+                    )}
+                    title="Pengaturan API Key"
+                  >
+                    <Settings size={20} />
+                  </button>
                   <div>
                     <h3 className="text-lg font-bold">FinBot AI</h3>
                     <p className="text-[10px] text-slate-400 uppercase tracking-widest">Asisten Keuangan Pribadi</p>
@@ -1360,7 +1407,36 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50">
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50 relative">
+                <AnimatePresence>
+                  {isAISettingsOpen && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="absolute inset-x-0 top-0 z-10 bg-white border-b border-slate-200 p-6 shadow-xl"
+                    >
+                      <h4 className="text-sm font-bold text-slate-800 mb-2">Pengaturan API Key Manual</h4>
+                      <p className="text-xs text-slate-500 mb-4">Jika fitur otomatis tidak bekerja, tempelkan API Key dari Google AI Studio di sini.</p>
+                      <div className="flex gap-2">
+                        <input 
+                          type="password"
+                          placeholder="Masukkan API Key Anda..."
+                          value={manualApiKey}
+                          onChange={e => setManualApiKey(e.target.value)}
+                          className="flex-1 p-2 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <button 
+                          onClick={() => saveManualKey(manualApiKey)}
+                          className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors"
+                        >
+                          Simpan
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 {aiMessages.length === 0 && (
                   <div className="h-full flex flex-col items-center justify-center text-center space-y-4 opacity-40">
                     <Sparkles size={48} />
