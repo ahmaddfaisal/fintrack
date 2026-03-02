@@ -283,9 +283,20 @@ export default function App() {
     setIsAILoading(true);
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
+      // Coba ambil key dari environment atau dari pilihan user
+      let apiKey = process.env.GEMINI_API_KEY || (process.env as any).API_KEY;
+      
+      // Jika tidak ada, cek apakah user sudah memilih key via dialog
+      if (!apiKey && window.aistudio) {
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        if (!hasKey) {
+          throw new Error('API_KEY_REQUIRED');
+        }
+        apiKey = (process.env as any).API_KEY;
+      }
+
       if (!apiKey) {
-        throw new Error('API Key Gemini tidak ditemukan. Pastikan sudah terkonfigurasi di environment.');
+        throw new Error('API_KEY_REQUIRED');
       }
 
       const genAI = new GoogleGenAI({ apiKey });
@@ -317,12 +328,27 @@ export default function App() {
       setAiMessages(prev => [...prev, { role: 'ai', text: text || 'Maaf, saya tidak bisa memproses permintaan Anda saat ini.' }]);
     } catch (err: any) {
       console.error('AI Error:', err);
-      const errorMessage = err.message?.includes('API Key') 
-        ? 'Waduh, sepertinya API Key AI-nya belum terpasang di server production.' 
-        : 'Waduh, sepertinya ada masalah koneksi dengan otak AI saya. Coba lagi nanti ya!';
-      setAiMessages(prev => [...prev, { role: 'ai', text: errorMessage }]);
+      if (err.message === 'API_KEY_REQUIRED') {
+        setAiMessages(prev => [...prev, { 
+          role: 'ai', 
+          text: 'Untuk menggunakan FinBot di versi publik, Anda perlu mengaktifkan API Key Anda sendiri (Gratis/Paid).' 
+        }]);
+      } else {
+        const errorMessage = err.message?.includes('API Key') 
+          ? 'Waduh, sepertinya API Key AI-nya belum terpasang di server production.' 
+          : 'Waduh, sepertinya ada masalah koneksi dengan otak AI saya. Coba lagi nanti ya!';
+        setAiMessages(prev => [...prev, { role: 'ai', text: errorMessage }]);
+      }
     } finally {
       setIsAILoading(false);
+    }
+  };
+
+  const handleOpenKeySelector = async () => {
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      // Setelah pilih key, beri tahu user
+      setAiMessages(prev => [...prev, { role: 'ai', text: 'API Key berhasil diaktifkan! Silakan tanya saya apa saja sekarang.' }]);
     }
   };
 
@@ -1343,14 +1369,22 @@ export default function App() {
                 )}
                 {aiMessages.map((msg, i) => (
                   <div key={i} className={cn(
-                    "flex w-full",
-                    msg.role === 'user' ? "justify-end" : "justify-start"
+                    "flex flex-col w-full",
+                    msg.role === 'user' ? "items-end" : "items-start"
                   )}>
                     <div className={cn(
                       "max-w-[80%] p-4 rounded-2xl text-sm shadow-sm",
                       msg.role === 'user' ? "bg-slate-900 text-white rounded-tr-none" : "bg-white text-slate-800 rounded-tl-none border border-slate-100"
                     )}>
                       {msg.text}
+                      {msg.text.includes('API Key Anda sendiri') && (
+                        <button 
+                          onClick={handleOpenKeySelector}
+                          className="mt-3 w-full py-2 bg-emerald-600 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-2 hover:bg-emerald-700 transition-colors"
+                        >
+                          <Sparkles size={14} /> Aktifkan API Key Sekarang
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
