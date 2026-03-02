@@ -31,8 +31,13 @@ import {
   CreditCard,
   Building2,
   MoreHorizontal,
-  ArrowRightLeft
+  ArrowRightLeft,
+  MessageSquare,
+  Bot,
+  Sparkles,
+  Banknote
 } from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
 import { 
@@ -58,7 +63,8 @@ const CATEGORIES = {
   income: ['Gaji', 'Bonus', 'Investasi', 'Freelance', 'Lainnya'],
   expense: ['Makanan', 'Transportasi', 'Sewa/Cicilan', 'Hiburan', 'Belanja', 'Kesehatan', 'Pendidikan', 'Lainnya'],
   saving: ['Tabungan Darurat', 'Tabungan Nikah', 'Tabungan Rumah', 'Tabungan Kendaraan', 'Investasi Saham/Reksadana', 'Lainnya'],
-  transfer: ['Pindah Saldo', 'Tabungan', 'Lainnya']
+  transfer: ['Pindah Saldo', 'Tabungan', 'Lainnya'],
+  debt: ['Cicilan Motor', 'Cicilan Mobil', 'KPR', 'Pinjaman Bank', 'Pinjol', 'Kartu Kredit', 'Lainnya']
 };
 
 export default function App() {
@@ -84,6 +90,10 @@ export default function App() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [isAdding, setIsAdding] = useState<TransactionType | null>(null);
   const [isAddingAccount, setIsAddingAccount] = useState(false);
+  const [isAIChatOpen, setIsAIChatOpen] = useState(false);
+  const [aiMessages, setAiMessages] = useState<{role: 'user' | 'ai', text: string}[]>([]);
+  const [aiInput, setAiInput] = useState('');
+  const [isAILoading, setIsAILoading] = useState(false);
   
   const [formData, setFormData] = useState({
     amount: '',
@@ -263,6 +273,52 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
+  const handleAIChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiInput.trim() || isAILoading) return;
+
+    const userMessage = aiInput.trim();
+    setAiMessages(prev => [...prev, { role: 'user', text: userMessage }]);
+    setAiInput('');
+    setIsAILoading(true);
+
+    try {
+      const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const model = genAI.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          {
+            role: 'user',
+            parts: [{
+              text: `Anda adalah asisten keuangan pribadi bernama FinBot. 
+              Berikut adalah data keuangan user saat ini:
+              - Total Pemasukan Bulan Ini: ${formatCurrency(stats.income)}
+              - Total Pengeluaran Bulan Ini: ${formatCurrency(stats.expenses)}
+              - Total Tabungan Bulan Ini: ${formatCurrency(stats.savings)}
+              - Total Cicilan Bulan Ini: ${formatCurrency(stats.debts)}
+              - Daftar Rekening: ${accounts.map(a => `${a.name}: ${formatCurrency(accountStats.find(as => as.id === a.id)?.current_balance || 0)}`).join(', ')}
+              - Transaksi Terakhir: ${transactions.slice(0, 10).map(t => `${t.date} ${t.type} ${t.category} ${formatCurrency(t.amount)}`).join('; ')}
+
+              Jawablah pertanyaan user dengan ramah, informatif, dan berikan saran keuangan yang bijak jika diminta.
+              Gunakan bahasa Indonesia yang santai tapi profesional.
+
+              Pertanyaan User: ${userMessage}`
+            }]
+          }
+        ]
+      });
+
+      const response = await model;
+      const text = response.text;
+      setAiMessages(prev => [...prev, { role: 'ai', text: text || 'Maaf, saya tidak bisa memproses permintaan Anda saat ini.' }]);
+    } catch (err: any) {
+      console.error('AI Error:', err);
+      setAiMessages(prev => [...prev, { role: 'ai', text: 'Waduh, sepertinya ada masalah koneksi dengan otak AI saya. Coba lagi nanti ya!' }]);
+    } finally {
+      setIsAILoading(false);
+    }
+  };
+
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
 
@@ -282,7 +338,10 @@ export default function App() {
     const savings = filteredTransactions
       .filter(t => t.type === 'saving')
       .reduce((sum, t) => sum + t.amount, 0);
-    return { income, expenses, savings, balance: income - expenses - savings };
+    const debts = filteredTransactions
+      .filter(t => t.type === 'debt')
+      .reduce((sum, t) => sum + t.amount, 0);
+    return { income, expenses, savings, debts, balance: income - expenses - savings - debts };
   }, [filteredTransactions]);
 
   const chartData = useMemo(() => {
@@ -306,12 +365,16 @@ export default function App() {
       const savings = monthTransactions
         .filter(t => t.type === 'saving')
         .reduce((sum, t) => sum + t.amount, 0);
+      const debts = monthTransactions
+        .filter(t => t.type === 'debt')
+        .reduce((sum, t) => sum + t.amount, 0);
 
       data.push({
         name: format(date, 'MMM'),
         income,
         expenses,
-        savings
+        savings,
+        debts
       });
     }
     return data;
@@ -407,6 +470,7 @@ export default function App() {
       const balanceChange = accTransactions.reduce((sum, t) => {
         if (t.type === 'income') return sum + t.amount;
         if (t.type === 'expense') return sum - t.amount;
+        if (t.type === 'debt') return sum - t.amount;
         if (t.type === 'saving') {
           // If it's a saving WITH a destination account
           if (t.to_account_id === acc.id) return sum + t.amount; // Received as saving
@@ -432,7 +496,8 @@ export default function App() {
     const income = yearTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
     const expenses = yearTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
     const savings = yearTransactions.filter(t => t.type === 'saving').reduce((sum, t) => sum + t.amount, 0);
-    return { income, expenses, savings, balance: income - expenses - savings, year };
+    const debts = yearTransactions.filter(t => t.type === 'debt').reduce((sum, t) => sum + t.amount, 0);
+    return { income, expenses, savings, debts, balance: income - expenses - savings - debts, year };
   }, [transactions, currentMonth]);
 
   const deleteTransaction = async (id: string) => {
@@ -643,18 +708,14 @@ export default function App() {
             </div>
             <div className="hidden sm:block">
               <p className="text-[10px] text-slate-400 uppercase">Pengeluaran</p>
-              <p className="text-sm font-bold text-rose-400">{formatCurrency(yearlyStats.expenses)}</p>
+              <p className="text-sm font-bold text-rose-400">{formatCurrency(yearlyStats.expenses + yearlyStats.debts)}</p>
             </div>
             <div className="hidden sm:block">
               <p className="text-[10px] text-slate-400 uppercase">Tabungan</p>
               <p className="text-sm font-bold text-blue-400">{formatCurrency(yearlyStats.savings)}</p>
             </div>
             <div className="sm:border-l border-slate-700 sm:pl-6 flex items-center gap-4">
-              <div>
-                <p className="text-[10px] text-slate-400 uppercase">Sisa</p>
-                <p className="text-sm font-bold text-white">{formatCurrency(yearlyStats.balance)}</p>
-              </div>
-              <div className="flex gap-2 ml-4">
+              <div className="flex gap-2">
                 <button 
                   onClick={exportData}
                   title="Export Excel"
@@ -674,7 +735,7 @@ export default function App() {
           </div>
         </div>
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -707,7 +768,7 @@ export default function App() {
               </span>
             </div>
             <p className="text-slate-500 text-sm font-medium">Total Pengeluaran</p>
-            <h2 className="text-2xl font-bold mt-1 text-rose-700">{formatCurrency(stats.expenses)}</h2>
+            <h2 className="text-2xl font-bold mt-1 text-rose-700">{formatCurrency(stats.expenses + stats.debts)}</h2>
           </motion.div>
 
           <motion.div 
@@ -726,21 +787,6 @@ export default function App() {
             </div>
             <p className="text-slate-500 text-sm font-medium">Total Tabungan</p>
             <h2 className="text-2xl font-bold mt-1 text-blue-700">{formatCurrency(stats.savings)}</h2>
-          </motion.div>
-
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="bg-slate-900 p-6 rounded-2xl shadow-xl shadow-slate-200"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div className="p-2 bg-slate-800 text-slate-300 rounded-lg">
-                <Wallet size={20} />
-              </div>
-            </div>
-            <p className="text-slate-400 text-sm font-medium">Sisa Saldo</p>
-            <h2 className="text-2xl font-bold mt-1 text-white">{formatCurrency(stats.balance)}</h2>
           </motion.div>
         </div>
 
@@ -763,6 +809,12 @@ export default function App() {
             className="flex-1 min-w-[160px] bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-blue-100 transition-all flex items-center justify-center gap-2"
           >
             <PiggyBank size={20} /> Tambah Tabungan
+          </button>
+          <button 
+            onClick={() => setIsAdding('debt')}
+            className="flex-1 min-w-[160px] bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-orange-100 transition-all flex items-center justify-center gap-2"
+          >
+            <Banknote size={20} /> Tambah Cicilan
           </button>
           <button 
             onClick={() => setIsAdding('transfer')}
@@ -792,6 +844,7 @@ export default function App() {
                   />
                   <Bar dataKey="income" fill="#10b981" radius={[4, 4, 0, 0]} name="Pemasukan" />
                   <Bar dataKey="expenses" fill="#ef4444" radius={[4, 4, 0, 0]} name="Pengeluaran" />
+                  <Bar dataKey="debts" fill="#f97316" radius={[4, 4, 0, 0]} name="Cicilan" />
                   <Bar dataKey="savings" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Tabungan" />
                 </BarChart>
               </ResponsiveContainer>
@@ -857,11 +910,13 @@ export default function App() {
                       "w-10 h-10 rounded-xl flex items-center justify-center",
                       t.type === 'income' ? "bg-emerald-50 text-emerald-600" : 
                       t.type === 'expense' ? "bg-rose-50 text-rose-600" : 
-                      t.type === 'saving' ? "bg-blue-50 text-blue-600" : "bg-slate-50 text-slate-600"
+                      t.type === 'saving' ? "bg-blue-50 text-blue-600" : 
+                      t.type === 'debt' ? "bg-orange-50 text-orange-600" : "bg-slate-50 text-slate-600"
                     )}>
                       {t.type === 'income' ? <TrendingUp size={20} /> : 
                        t.type === 'expense' ? <TrendingDown size={20} /> : 
-                       t.type === 'saving' ? <PiggyBank size={20} /> : <ArrowRightLeft size={20} />}
+                       t.type === 'saving' ? <PiggyBank size={20} /> : 
+                       t.type === 'debt' ? <Banknote size={20} /> : <ArrowRightLeft size={20} />}
                     </div>
                     <div>
                       <p className="font-bold text-slate-800">{t.category}</p>
@@ -888,9 +943,10 @@ export default function App() {
                       "font-bold text-right",
                       t.type === 'income' ? "text-emerald-600" : 
                       t.type === 'expense' ? "text-rose-600" : 
-                      t.type === 'saving' ? "text-blue-600" : "text-slate-600"
+                      t.type === 'saving' ? "text-blue-600" : 
+                      t.type === 'debt' ? "text-orange-600" : "text-slate-600"
                     )}>
-                      {t.type === 'income' ? '+' : t.type === 'expense' ? '-' : t.type === 'saving' ? '•' : '⇄'}{formatCurrency(t.amount)}
+                      {t.type === 'income' ? '+' : t.type === 'expense' ? '-' : t.type === 'debt' ? '-' : t.type === 'saving' ? '•' : '⇄'}{formatCurrency(t.amount)}
                     </p>
                     <button 
                       onClick={() => deleteTransaction(t.id)}
@@ -912,6 +968,17 @@ export default function App() {
       </main>
 
       {/* Modal Form */}
+      {/* Floating AI Button */}
+      <motion.button
+        whileHover={{ scale: 1.1 }}
+        whileTap={{ scale: 0.9 }}
+        onClick={() => setIsAIChatOpen(true)}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-slate-900 text-white rounded-full shadow-2xl flex items-center justify-center z-40 group"
+      >
+        <Bot size={28} className="group-hover:hidden" />
+        <Sparkles size={28} className="hidden group-hover:block animate-pulse text-emerald-400" />
+      </motion.button>
+
       <AnimatePresence>
         {isAdding && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -932,16 +999,19 @@ export default function App() {
                 "p-6 text-white flex items-center justify-between",
                 isAdding === 'income' ? "bg-emerald-600" : 
                 isAdding === 'expense' ? "bg-rose-600" : 
-                isAdding === 'saving' ? "bg-blue-600" : "bg-slate-600"
+                isAdding === 'saving' ? "bg-blue-600" : 
+                isAdding === 'debt' ? "bg-orange-600" : "bg-slate-600"
               )}>
                 <h3 className="text-xl font-bold flex items-center gap-2">
                   {isAdding === 'income' ? <PlusCircle /> : 
                    isAdding === 'expense' ? <MinusCircle /> : 
-                   isAdding === 'saving' ? <PiggyBank /> : <ArrowRightLeft />}
+                   isAdding === 'saving' ? <PiggyBank /> : 
+                   isAdding === 'debt' ? <Banknote /> : <ArrowRightLeft />}
                   Tambah {
                     isAdding === 'income' ? 'Pemasukan' : 
                     isAdding === 'expense' ? 'Pengeluaran' : 
-                    isAdding === 'saving' ? 'Tabungan' : 'Transfer'
+                    isAdding === 'saving' ? 'Tabungan' : 
+                    isAdding === 'debt' ? 'Cicilan' : 'Transfer'
                   }
                 </h3>
                 <button onClick={() => setIsAdding(null)} className="hover:bg-white/20 p-1 rounded-full transition-colors">
@@ -1048,7 +1118,8 @@ export default function App() {
                     "w-full py-4 rounded-xl text-white font-bold shadow-lg transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2",
                     isAdding === 'income' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100" : 
                     isAdding === 'expense' ? "bg-rose-600 hover:bg-rose-700 shadow-rose-100" : 
-                    isAdding === 'saving' ? "bg-blue-600 hover:bg-blue-700 shadow-blue-100" : "bg-slate-600 hover:bg-slate-700 shadow-slate-100",
+                    isAdding === 'saving' ? "bg-blue-600 hover:bg-blue-700 shadow-blue-100" : 
+                    isAdding === 'debt' ? "bg-orange-600 hover:bg-orange-700 shadow-orange-100" : "bg-slate-600 hover:bg-slate-700 shadow-slate-100",
                     isSyncing && "opacity-50 cursor-not-allowed"
                   )}
                 >
@@ -1221,6 +1292,85 @@ export default function App() {
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 mt-4"
                 >
                   Simpan Rekening
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+        {isAIChatOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsAIChatOpen(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-2xl h-[80vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-emerald-400">
+                    <Bot size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold">FinBot AI</h3>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-widest">Asisten Keuangan Pribadi</p>
+                  </div>
+                </div>
+                <button onClick={() => setIsAIChatOpen(false)} className="hover:bg-white/20 p-1 rounded-full transition-colors">
+                  <ChevronLeft className="rotate-90" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50">
+                {aiMessages.length === 0 && (
+                  <div className="h-full flex flex-col items-center justify-center text-center space-y-4 opacity-40">
+                    <Sparkles size={48} />
+                    <p className="max-w-xs text-sm font-medium">Halo! Saya FinBot. Tanyakan apa saja tentang keuangan Anda, atau minta saran hemat!</p>
+                  </div>
+                )}
+                {aiMessages.map((msg, i) => (
+                  <div key={i} className={cn(
+                    "flex w-full",
+                    msg.role === 'user' ? "justify-end" : "justify-start"
+                  )}>
+                    <div className={cn(
+                      "max-w-[80%] p-4 rounded-2xl text-sm shadow-sm",
+                      msg.role === 'user' ? "bg-slate-900 text-white rounded-tr-none" : "bg-white text-slate-800 rounded-tl-none border border-slate-100"
+                    )}>
+                      {msg.text}
+                    </div>
+                  </div>
+                ))}
+                {isAILoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-white p-4 rounded-2xl rounded-tl-none border border-slate-100 shadow-sm flex items-center gap-2">
+                      <RefreshCw size={16} className="animate-spin text-emerald-500" />
+                      <span className="text-xs font-medium text-slate-400 tracking-wider uppercase">FinBot sedang berpikir...</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <form onSubmit={handleAIChat} className="p-4 bg-white border-t border-slate-100 flex gap-2">
+                <input 
+                  type="text"
+                  placeholder="Tanya sesuatu..."
+                  value={aiInput}
+                  onChange={e => setAiInput(e.target.value)}
+                  className="flex-1 p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-900 outline-none"
+                />
+                <button 
+                  type="submit"
+                  disabled={isAILoading}
+                  className="p-3 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-all disabled:opacity-50"
+                >
+                  <ArrowUpRight size={24} />
                 </button>
               </form>
             </motion.div>
